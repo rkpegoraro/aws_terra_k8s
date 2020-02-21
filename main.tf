@@ -5,8 +5,8 @@ terraform {
 provider "aws" {
   region = "us-east-2" //Ohio
   
-  # Locks AWS provider version
-  version = "~> 2.49"
+  # # Locks AWS provider version
+  # version = "~> 2.49"
 }
 
 # # VPC
@@ -77,6 +77,25 @@ resource "aws_instance" "k8s_proxy" {
                   sudo echo "${var.proxy_hostname}" > /etc/hostname
                   sudo apt-get update
                   sudo apt-get install -y haproxy
+
+                  #TODO look for a more elagant way to copy the haproxy.cfg
+                  # I was not able to copy a local file to /etc/haproxy/haproxy.cfg using the file provisioner
+                  # I had to copy the file to /tmp them opem another connection with remote-exec to copy the file to the prper place
+                  # That was too messy
+                  echo "" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "frontend kubernetes" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    mode tcp" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    bind k8s-proxy-1:6443" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    option tcplog" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    default_backend k8s-masters" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    backend k8s-masters" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    mode tcp" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    balance roundrobin" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    option tcp-check" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    server k8s-master-1 server1_ip:6443 check fall 3 rise 2" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    server k8s-master-2 server1_ip:6443 check fall 3 rise 2" | sudo tee -a /etc/haproxy/haproxy.cfg
+                  echo "    server k8s-master-3 server1_ip:6443 check fall 3 rise 2" | sudo tee -a /etc/haproxy/haproxy.cfg
                   EOF
 
   tags = {
@@ -131,8 +150,8 @@ locals {
   instance_list = concat([aws_instance.k8s_proxy], aws_instance.k8s_masters, aws_instance.k8s_workers)
 }
 
-# Create hosts file on proxy server
-resource "null_resource" "proxy_hosts" {
+# Edit hosts file on all created instances
+resource "null_resource" "edit_hosts" {
   # # Changes to any instance of the cluster requires re-provisioning
   # triggers = {
   #   cluster_instance_ids = "${join(",", aws_instance.cluster.*.id)}"
@@ -147,8 +166,9 @@ resource "null_resource" "proxy_hosts" {
   ]
 
   connection {
-    private_key = "${file(var.private_key)}"
+    type        = "ssh"
     user        = "ubuntu"
+    private_key = "${file(var.private_key)}"
     host = element(local.instance_list.*.public_ip, count.index)
   }
 
