@@ -20,9 +20,9 @@ provider "aws" {
 # }
 
 # // Subnet
-# resource "aws_subnet" "k8s-subnet" {
+# resource "aws_subnet" "k8s_subnet" {
 #   cidr_block = cidrsubnet(aws_vpc.k8s-vpc.cidr_block, 3, 1)
-#   vpc_id = aws_vpc.k8s-vpc.id
+#   vpc_id = aws_vpc.k8s_vpc.id
 #   availability_zone = "us-east-2a"
 # }
 
@@ -35,9 +35,9 @@ data "aws_subnet_ids" "default" {
 }
 
 # Security Group
-resource "aws_security_group" "k8s-multimaster" {
+resource "aws_security_group" "k8s_multimaster" {
   
-  name = "k8s-multimaster"
+  name = "k8s_multimaster"
 
   # ssh access
   ingress {
@@ -47,6 +47,14 @@ resource "aws_security_group" "k8s-multimaster" {
     protocol    = "tcp"
   }
   
+  # full permission among hosts in this security group
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    self        = true
+  }
+
   # Allow all outbound requests
   egress {
     from_port   = 0
@@ -57,12 +65,12 @@ resource "aws_security_group" "k8s-multimaster" {
 }
 
 # Proxy Instance
-resource "aws_instance" "k8s-proxy" {
+resource "aws_instance" "k8s_proxy" {
 
   ami           = "ami-0b51ab7c28f4bf5a6" //Ubuntu 18_04
   instance_type = "t2.micro"
   key_name      = "k8s-test"
-  vpc_security_group_ids = [aws_security_group.k8s-multimaster.id]
+  vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
   user_data     = <<-EOF
                   #!/bin/bash
                   sudo hostname "${var.proxy_hostname}"
@@ -78,43 +86,77 @@ resource "aws_instance" "k8s-proxy" {
 }
 
 # K8s Master Instances
-resource "aws_instance" "k8s-masters" {
-  count         = "3"
+resource "aws_instance" "k8s_masters" {
+  count         = "1"
   ami           = "ami-0b51ab7c28f4bf5a6" //Ubuntu 18_04
   instance_type = "t2.micro"
   key_name      = "k8s-test"
-  vpc_security_group_ids = [aws_security_group.k8s-multimaster.id]
+  vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
   user_data     = <<-EOF
                   #!/bin/bash
-                  sudo hostname "k8s-master-0${count.index + 1}"
-                  sudo echo "k8s-master-0${count.index + 1}" > /etc/hostname
+                  sudo hostname "${var.master_prefix}${count.index + 1}"
+                  sudo echo "${var.master_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
                   curl -fsSL https://get.docker.com | sh
                   EOF
 
   tags = {
-    Name  = "k8s-master-0${count.index + 1}"
+    Name  = "${var.master_prefix}${count.index + 1}"
   }
 
 }
 
 # K8s Worker Instances
-resource "aws_instance" "k8s-workers" {
-  count         = "3"
+resource "aws_instance" "k8s_workers" {
+  count         = "1"
   ami           = "ami-0b51ab7c28f4bf5a6" //Ubuntu 18_04
   instance_type = "t2.micro"
   key_name      = "k8s-test"
-  vpc_security_group_ids = [aws_security_group.k8s-multimaster.id]
+  vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
   user_data     = <<-EOF
                   #!/bin/bash
-                  sudo hostname "k8s-worker-0${count.index + 1}"
-                  sudo echo "k8s-worker-0${count.index + 1}" > /etc/hostname
+                  sudo hostname "${var.worker_prefix}${count.index + 1}"
+                  sudo echo "${var.worker_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
                   curl -fsSL https://get.docker.com | sh
                   EOF
 
   tags = {
-    Name  = "k8s-worker-0${count.index + 1}"
+    Name  = "${var.worker_prefix}${count.index + 1}"
+  }
+}
+
+locals {
+  # A list of all instances created
+  instance_list = concat([aws_instance.k8s_proxy], aws_instance.k8s_masters, aws_instance.k8s_workers)
+}
+
+# Create hosts file on proxy server
+resource "null_resource" "proxy_hosts" {
+  # # Changes to any instance of the cluster requires re-provisioning
+  # triggers = {
+  #   cluster_instance_ids = "${join(",", aws_instance.cluster.*.id)}"
+  # }
+
+  count = length(local.instance_list)
+
+  depends_on = [
+    aws_instance.k8s_proxy,
+    aws_instance.k8s_masters,
+    aws_instance.k8s_workers,
+  ]
+
+  connection {
+    private_key = "${file(var.private_key)}"
+    user        = "ubuntu"
+    host = element(local.instance_list.*.public_ip, count.index)
   }
 
+  provisioner "remote-exec" {
+    # Change /etc/host file
+    inline = [
+      for host in local.instance_list: 
+        "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
+    ]
+  }
 }
