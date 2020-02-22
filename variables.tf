@@ -1,5 +1,6 @@
 variable "private_key" {
-  default = "C:\\tools\\keys\\k8s-test.pem"
+  # default = "C:\\tools\\keys\\k8s-test.pem"
+  default = "~/.ssh/k8s-test.pem"
 }
 
 variable "proxy_hostname" {
