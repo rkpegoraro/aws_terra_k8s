@@ -3,6 +3,10 @@ variable "private_key" {
   default = "~/.ssh/k8s-test.pem"
 }
 
+variable "remote_user" {
+  default = "ubuntu"
+}
+
 variable "proxy_hostname" {
   description = "Hostname of the HAProxy server"
   type        = string
