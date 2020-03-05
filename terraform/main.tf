@@ -110,7 +110,7 @@ resource "aws_instance" "k8s_masters" {
                   sudo hostname "${var.master_prefix}${count.index + 1}"
                   sudo echo "${var.master_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
-                  #docker install
+                  # docker install
                   curl -fsSL https://get.docker.com | sh
                   EOF
 
@@ -132,6 +132,7 @@ resource "aws_instance" "k8s_workers" {
                   sudo hostname "${var.worker_prefix}${count.index + 1}"
                   sudo echo "${var.worker_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
+                  # docker install
                   curl -fsSL https://get.docker.com | sh
                   EOF
 
