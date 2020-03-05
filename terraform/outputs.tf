@@ -1,43 +1,41 @@
-output "proxy_private_IP" {
+output "_1_proxy_private_IP" {
   value = aws_instance.k8s_proxy.private_ip
 }
 
-output "masters_private_IPs" {
+output "_2_masters_private_IPs" {
   value = {
     for instance in aws_instance.k8s_masters:
     instance.tags.Name => instance.private_ip
   }
 }
 
-output "workers_private_IPs" {
+output "_3_workers_private_IPs" {
   value = {
     for instance in aws_instance.k8s_workers:
     instance.tags.Name => instance.private_ip
   }
 }
 
-output "proxy_public_IP" {
+output "_4_proxy_public_IP" {
   value = aws_instance.k8s_proxy.public_ip
 }
 
-output "masters_public_IPs" {
+output "_5_masters_public_IPs" {
   value = {
     for instance in aws_instance.k8s_masters:
     instance.tags.Name => instance.public_ip
   }
 }
-output "workers_public_IPs" {
+output "_6_workers_public_IPs" {
   value = {
     for instance in aws_instance.k8s_workers:
     instance.tags.Name => instance.public_ip
   }
 }
 
-# output "hosts" {
-#   value = [
-#     for host in local.instance_list: 
-#       "${host.private_ip} ${host.tags.Name}"
-#   ]
+# output "instances_info" {
+#   value = {
+#     for instance in concat([aws_instance.k8s_proxy], aws_instance.k8s_masters, aws_instance.k8s_workers) :
+#       format("%13s", instance.tags.Name) => format("%15s %15s", instance.private_ip, instance.public_ip)
+#   }
 # }
-
-      
