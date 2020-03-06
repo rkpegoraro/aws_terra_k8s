@@ -21,14 +21,18 @@ variable "instance_type" {
   }
 }
 
+variable "proxy_count" {
+  description = "Number of haproxy servers"
+  default = 2
+}
 variable "master_count" {
   description = "Number of kubernetes master nodes"
-  default = 3
+  default = 1
 }
 
 variable "worker_count" {
   description = "Number of kubernetes worker nodes"
-  default = 3
+  default = 1
 }
 
 variable "remote_user" {
@@ -36,9 +40,9 @@ variable "remote_user" {
   default = "ubuntu"
 }
 
-variable "proxy_hostname" {
+variable "proxy_prefix" {
   description = "Hostname of the HAProxy server"
-  default     = "k8s-haproxy-1"
+  default     = "k8s-haproxy-"
 }
 
 variable "master_prefix" {

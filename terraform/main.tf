@@ -78,22 +78,35 @@ resource "aws_security_group" "k8s_multimaster" {
   }
 }
 
-# Proxy Instance
-resource "aws_instance" "k8s_proxy" {
 
-  ami                    = var.ami
+// Lookup latest Ubuntu 18.04 AMI
+data "aws_ami" "ubuntu18" {
+  most_recent = true
+  owners = ["099720109477"] //Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server-*"]
+  }
+}
+
+# Proxy Instance
+resource "aws_instance" "k8s_proxies" {
+  count                  = var.proxy_count
+  # ami                    = var.ami
+  ami                    = data.aws_ami.ubuntu18.id
   instance_type          = var.instance_type["proxy"]
   key_name               = "k8s-test"
   vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
   user_data              = <<-EOF
                   #!/bin/bash
-                  sudo hostname "${var.proxy_hostname}"
-                  sudo echo "${var.proxy_hostname}" > /etc/hostname
+                  sudo hostname "${var.proxy_prefix}${count.index + 1}"
+                  sudo echo "${var.proxy_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
                   EOF
 
   tags = {
-    Name = var.proxy_hostname
+    Name = "${var.proxy_prefix}${count.index + 1}"
   }
 
 }
@@ -101,7 +114,8 @@ resource "aws_instance" "k8s_proxy" {
 # K8s Master Instances
 resource "aws_instance" "k8s_masters" {
   count                  = var.master_count
-  ami                    = var.ami
+  # ami                    = var.ami
+  ami                    = data.aws_ami.ubuntu18.id
   instance_type          = var.instance_type["master"]
   key_name               = "k8s-test"
   vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
@@ -123,7 +137,8 @@ resource "aws_instance" "k8s_masters" {
 # K8s Worker Instances
 resource "aws_instance" "k8s_workers" {
   count                  = var.worker_count
-  ami                    = var.ami
+  # ami                    = var.ami
+  ami                    = data.aws_ami.ubuntu18.id
   instance_type          = var.instance_type["worker"]
   key_name               = "k8s-test"
   vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
@@ -144,50 +159,61 @@ resource "aws_instance" "k8s_workers" {
 # Consolidate all instances on a single list
 locals {
   # A list of all instances created
-  instance_list = concat([aws_instance.k8s_proxy], aws_instance.k8s_masters, aws_instance.k8s_workers)
+  instance_list = concat(aws_instance.k8s_proxies, aws_instance.k8s_masters, aws_instance.k8s_workers)
 }
 
-# Edit hosts file on all created instances
-# It is possible to do this with ansible, but I choose to left this as an example
-resource "null_resource" "edit_hosts" {
-  count = length(local.instance_list)
+# # Edit hosts file on all created instances
+# # It is possible to do this with ansible, but I choose to left this as an example
+# resource "null_resource" "edit_hosts" {
+#   count = length(local.instance_list)
 
-  depends_on = [
-    aws_instance.k8s_proxy,
-    aws_instance.k8s_masters,
-    aws_instance.k8s_workers,
-  ]
+#   depends_on = [
+#     aws_instance.k8s_proxies,
+#     aws_instance.k8s_masters,
+#     aws_instance.k8s_workers,
+#   ]
 
-  connection {
-    type        = "ssh"
-    user        = "ubuntu"
-    private_key = file(var.private_key)
-    host        = element(local.instance_list.*.public_ip, count.index)
-  }
+#   connection {
+#     type        = "ssh"
+#     user        = "ubuntu"
+#     private_key = file(var.private_key)
+#     host        = element(local.instance_list.*.public_ip, count.index)
+#   }
 
-  provisioner "remote-exec" {
-    # Change /etc/host file
-    inline = [
-      for host in local.instance_list :
-      "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
-    ]
-  }
-}
+#   provisioner "remote-exec" {
+#     # Change /etc/host file
+#     inline = [
+#       for host in local.instance_list :
+#       "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
+#     ]
+#   }
+# }
 
+# resource "aws_eip" "proxy_eip" {
+#   instance = aws_instance.k8s_proxies.0.id
+#   vpc      = true
+
+#   depends_on = [
+#     aws_instance.k8s_proxies,
+#   ]
+# }
 
 # Create local inventory
 resource "null_resource" "ansible_inventory" {
   
-  depends_on = [
-    null_resource.edit_hosts,
-  ]
+  # depends_on = [
+  #   # null_resource.edit_hosts,
+  #   aws_eip.proxy_eip # The EIP overwrites the initial haproxy-1 instance public_ip
+  # ]
 
   provisioner "local-exec" {
     command = <<-EOT
       #!/bin/bash
       > ../ansible/inventory.ini
       echo "[haproxy]" | tee -a ../ansible/inventory.ini
-      echo "${aws_instance.k8s_proxy.tags.Name} ansible_host=${aws_instance.k8s_proxy.public_ip} private_ip=${aws_instance.k8s_proxy.private_ip}" | tee -a ../ansible/inventory.ini
+      %{ for node in aws_instance.k8s_proxies }
+        echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini
+      %{ endfor ~}
       echo "[k8s_masters]" | tee -a ../ansible/inventory.ini
       %{ for node in aws_instance.k8s_masters }
         echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini

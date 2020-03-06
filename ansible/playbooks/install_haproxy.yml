@@ -12,11 +12,11 @@
       cache_valid_time: 86400 #One day
   - name: Install Haproxy
     apt: pkg=haproxy state=latest
-  - name: Copy cfg file
-    template: 
-      src: ../templates/haproxy.cfg.j2 
-      dest: /etc/haproxy/haproxy.cfg
-      mode: 0644
-      validate: haproxy -f %s -c -q
-  - name: Ensure HAProxy is started and enabled on boot.
-    service: name=haproxy state=restarted enabled=yes    
+  # - name: Copy cfg file
+  #   template: 
+  #     src: ../templates/haproxy.cfg.j2 
+  #     dest: /etc/haproxy/haproxy.cfg
+  #     mode: 0644
+  #     validate: haproxy -f %s -c -q
+  # - name: Ensure HAProxy is started and enabled on boot.
+  #   service: name=haproxy state=restarted enabled=yes    
