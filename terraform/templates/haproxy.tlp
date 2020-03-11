@@ -1,3 +1,6 @@
+global
+        log /dev/log    local0
+        log /dev/log    local1 notice
         chroot /var/lib/haproxy
         stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
         stats timeout 30s
@@ -29,7 +32,7 @@ defaults
 
 frontend kubernetes
         mode tcp
-        bind k8s-proxy-1:6443
+        bind *:6443
         option tcplog
         default_backend k8s-masters
 
@@ -37,6 +40,6 @@ backend k8s-masters
         mode tcp
         balance roundrobin
         option tcp-check
-        server k8s-master-1 server1_ip:6443 check fall 3 rise 2
-        server k8s-master-2 server2_ip:6443 check fall 3 rise 2
-        server k8s-master-3 server3_ip:6443 check fall 3 rise 2
+        %{ for host in masters ~}
+        server ${host} ${host}:6443 check fall 3 rise 2
+        %{ endfor ~}

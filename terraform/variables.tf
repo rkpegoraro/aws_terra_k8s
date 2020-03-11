@@ -16,8 +16,8 @@ variable "instance_type" {
   description = "AMI to be used on the new virtual machines"
   default = {
     proxy = "t2.micro"
-    master = "t3a.small"
-    worker = "t3a.small"
+    master = "t2.micro" #"t3a.small"
+    worker = "t2.micro" #"t3a.small"
   }
 }
 

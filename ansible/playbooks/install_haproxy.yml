@@ -2,21 +2,80 @@
 - hosts: haproxy
   become: yes
   become_method: sudo
-  gather_facts: False
+  gather_facts: yes
 
   tasks:
-  - name: Update and upgrade apt packages
-    apt:
-      upgrade: yes
-      update_cache: yes
-      cache_valid_time: 86400 #One day
-  - name: Install Haproxy
-    apt: pkg=haproxy state=latest
-  # - name: Copy cfg file
-  #   template: 
-  #     src: ../templates/haproxy.cfg.j2 
-  #     dest: /etc/haproxy/haproxy.cfg
-  #     mode: 0644
-  #     validate: haproxy -f %s -c -q
-  # - name: Ensure HAProxy is started and enabled on boot.
-  #   service: name=haproxy state=restarted enabled=yes    
+    # - name: Update and upgrade apt packages
+    #   apt:
+    #     upgrade: yes
+    #     update_cache: yes
+    #     cache_valid_time: 86400 #One day
+    
+    # - name: Allow binding non-local ip
+    #   sysctl:
+    #     name: net.ipv4.ip_nonlocal_bind
+    #     value: 1
+    #     reload: true
+    #     state: present
+
+    # - name: configure selinux
+    #   raw:
+    #     yum -q -y install policycoreutils-python && \
+    #     semanage port -a -t http_port_t -p tcp 6443
+
+    - name: Install keepalived
+      package: name=keepalived state=present
+
+    - name: Create failover script keepalived master
+      copy:
+        src: ../../terraform/config/failover_master.sh
+        dest: /etc/keepalived/failover.sh
+        mode: 0700
+      when: '"haproxy-1" in inventory_hostname'
+
+    - name: Create failover script keepalived slave
+      copy:
+        src: ../../terraform/config/failover_slave.sh
+        dest: /etc/keepalived/failover.sh
+        mode: 0700
+      when: '"haproxy-2" in inventory_hostname'
+
+    - name: Configure keepalived master
+      copy:
+        src: ../../terraform/config/keepalived-master.cfg
+        dest: /etc/keepalived/keepalived.conf
+        mode: 0644
+      notify: restart keepalived
+      when: '"haproxy-1" in inventory_hostname'
+
+    - name: Configure keepalived slave
+      copy:
+        src: ../../terraform/config/keepalived-slave.cfg
+        dest: /etc/keepalived/keepalived.conf
+        mode: 0644
+      notify: restart keepalived
+      when: '"haproxy-2" in inventory_hostname'
+
+    - name: start and enable keepalived
+      service: name=keepalived state=started enabled=yes
+
+    - name: Install HAproxy
+      package: name=haproxy state=present
+
+    - name: Configure HAproxy
+      copy:
+        src: ../../terraform/config/haproxy.cfg
+        dest: /etc/haproxy/haproxy.cfg
+        mode: 0644
+        #validate: haproxy -f %s -c -q
+      notify: restart haproxy
+
+    - name: Ensure HAProxy is started and enabled on boot.
+      service: name=haproxy state=started enabled=yes
+
+  handlers:
+    - name: restart haproxy
+      service: name=haproxy state=restarted
+
+    - name: restart keepalived
+      service: name=keepalived state=restarted

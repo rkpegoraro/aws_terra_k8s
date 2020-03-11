@@ -39,9 +39,9 @@ output "_6_workers_public_IPs" {
   }
 }
 
-# output "_7_public_EIP" {
-#   value = aws_eip.proxy_eip.public_ip
-# }
+output "_7_public_EIP" {
+  value = aws_eip.proxy_eip.public_ip
+}
 
 
 # output "instances_info" {

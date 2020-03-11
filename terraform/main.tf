@@ -97,12 +97,18 @@ resource "aws_instance" "k8s_proxies" {
   ami                    = data.aws_ami.ubuntu18.id
   instance_type          = var.instance_type["proxy"]
   key_name               = "k8s-test"
+  iam_instance_profile   = "k8s-ec2-iam"
   vpc_security_group_ids = [aws_security_group.k8s_multimaster.id]
   user_data              = <<-EOF
                   #!/bin/bash
                   sudo hostname "${var.proxy_prefix}${count.index + 1}"
                   sudo echo "${var.proxy_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
+                  sudo apt-get install -y unzip
+                  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                  unzip awscliv2.zip
+                  sudo ./aws/install
+                  rm -rf ~/aws*
                   EOF
 
   tags = {
@@ -162,58 +168,109 @@ locals {
   instance_list = concat(aws_instance.k8s_proxies, aws_instance.k8s_masters, aws_instance.k8s_workers)
 }
 
-# # Edit hosts file on all created instances
-# # It is possible to do this with ansible, but I choose to left this as an example
-# resource "null_resource" "edit_hosts" {
-#   count = length(local.instance_list)
+# Edit hosts file on all created instances
+# It is possible to do this with ansible, but I choose to left this as an example
+resource "null_resource" "edit_hosts" {
+  count = length(local.instance_list)
 
-#   depends_on = [
-#     aws_instance.k8s_proxies,
-#     aws_instance.k8s_masters,
-#     aws_instance.k8s_workers,
-#   ]
+  depends_on = [
+    aws_instance.k8s_proxies,
+    aws_instance.k8s_masters,
+    aws_instance.k8s_workers,
+  ]
 
-#   connection {
-#     type        = "ssh"
-#     user        = "ubuntu"
-#     private_key = file(var.private_key)
-#     host        = element(local.instance_list.*.public_ip, count.index)
-#   }
+  connection { //default ssh
+    #type        = "ssh"
+    user        = "ubuntu"
+    private_key = file(var.private_key)
+    host        = element(local.instance_list.*.public_ip, count.index)
+  }
 
-#   provisioner "remote-exec" {
-#     # Change /etc/host file
-#     inline = [
-#       for host in local.instance_list :
-#       "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
-#     ]
-#   }
-# }
+  provisioner "remote-exec" {
+    # Change /etc/host file
+    inline = [
+      for host in local.instance_list :
+      "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
+    ]
+  }
+}
 
-# resource "aws_eip" "proxy_eip" {
-#   instance = aws_instance.k8s_proxies.0.id
-#   vpc      = true
+resource "aws_eip" "proxy_eip" {
+  instance = aws_instance.k8s_proxies.0.id
+  vpc      = true
 
-#   depends_on = [
-#     aws_instance.k8s_proxies,
-#   ]
-# }
+  depends_on = [
+    null_resource.edit_hosts,
+  ]
+}
+
+###############################################################################
+# Create configuration files
+###############################################################################
+
+# Create Keepalived master configuration from Terraform templates #
+resource "local_file" "keepalived_master" {
+  content  = templatefile("./templates/keepalived_master.tlp", {
+    ip_master = aws_instance.k8s_proxies.0.private_ip
+    ip_slave  = aws_instance.k8s_proxies.1.private_ip
+  })
+  filename = "config/keepalived-master.cfg"
+}
+
+# Create Keepalived slave configuration from Terraform templates #
+resource "local_file" "keepalived_slave" {
+  content  = templatefile("./templates/keepalived_slave.tlp", {
+    ip_master = aws_instance.k8s_proxies.0.private_ip
+    ip_slave  = aws_instance.k8s_proxies.1.private_ip
+  })
+  filename = "config/keepalived-slave.cfg"
+}
+
+# Create Keepalived script on master from Terraform templates #
+resource "local_file" "keepalived_master_script" {
+  content  = templatefile("./templates/keepalived_failover.tlp", {
+    elastic_ip  = aws_eip.proxy_eip.public_ip
+    instance_id = aws_instance.k8s_proxies.0.id
+  })
+  filename = "config/failover_master.sh"
+}
+
+# Create Keepalived script on slave from Terraform templates #
+resource "local_file" "keepalived_slave_script" {
+  content  = templatefile("./templates/keepalived_failover.tlp", {
+    elastic_ip  = aws_eip.proxy_eip.public_ip
+    instance_id = aws_instance.k8s_proxies.1.id
+  })
+  filename = "config/failover_slave.sh"
+}
+
+# Create HAProxy configuration file from Terraform templates #
+resource "local_file" "haproxy_config" {
+  content  = templatefile("./templates/haproxy.tlp", {
+    masters = aws_instance.k8s_masters.*.tags.Name
+  })
+  filename = "config/haproxy.cfg"
+}
 
 # Create local inventory
 resource "null_resource" "ansible_inventory" {
   
-  # depends_on = [
-  #   # null_resource.edit_hosts,
-  #   aws_eip.proxy_eip # The EIP overwrites the initial haproxy-1 instance public_ip
-  # ]
+  depends_on = [
+    aws_eip.proxy_eip,
+    aws_instance.k8s_masters,
+    aws_instance.k8s_workers,
+  ]  
 
+  # Note 1  The sleep command is to wait a bit so the instances are reachable
+  # Note 2: The proxy instances are not in a loop because the elastic_ip overwrites the public ip of the first proxy instance, but 
+  # seems that the terraform aws_instance is unable to recognized that new public ip
   provisioner "local-exec" {
     command = <<-EOT
-      #!/bin/bash
+      sleep 20s
       > ../ansible/inventory.ini
       echo "[haproxy]" | tee -a ../ansible/inventory.ini
-      %{ for node in aws_instance.k8s_proxies }
-        echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini
-      %{ endfor ~}
+      echo "${aws_instance.k8s_proxies.0.tags.Name} ansible_host=${aws_eip.proxy_eip.public_ip} private_ip=${aws_instance.k8s_proxies.0.private_ip}" | tee -a ../ansible/inventory.ini
+      echo "${aws_instance.k8s_proxies.1.tags.Name} ansible_host=${aws_instance.k8s_proxies.1.public_ip} private_ip=${aws_instance.k8s_proxies.1.private_ip}" | tee -a ../ansible/inventory.ini
       echo "[k8s_masters]" | tee -a ../ansible/inventory.ini
       %{ for node in aws_instance.k8s_masters }
         echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini
