@@ -1,0 +1,32 @@
+[all]
+${proxy0.tags.Name} ansible_host=${elastic_ip} ip=${proxy0.private_ip}
+${proxy1.tags.Name} ansible_host=${proxy1.public_ip} ip=${proxy1.private_ip}
+%{ for host in masters ~}
+${host.tags.Name} ansible_host=${host.public_ip} ip=${host.private_ip}
+%{ endfor ~}
+%{ for host in workers ~}
+${host.tags.Name} ansible_host=${host.public_ip} ip=${host.private_ip}
+%{ endfor ~}
+
+[haproxy]
+${proxy0.tags.Name}
+${proxy1.tags.Name}
+
+[kube-master]
+%{ for host in masters ~}
+${host.tags.Name}
+%{ endfor ~}
+
+[etcd]
+%{ for host in masters ~}
+${host.tags.Name}
+%{ endfor ~}
+
+[kube-node]
+%{ for host in workers ~}
+${host.tags.Name}
+%{ endfor ~}
+
+[k8s-cluster:children]
+kube-master
+kube-node

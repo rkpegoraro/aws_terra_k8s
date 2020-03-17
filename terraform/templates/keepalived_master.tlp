@@ -1,7 +1,7 @@
 vrrp_script check_haproxy
 {
     script "pgrep haproxy"
-    interval 5
+    interval 2
     fall 2
     rise 2
 }

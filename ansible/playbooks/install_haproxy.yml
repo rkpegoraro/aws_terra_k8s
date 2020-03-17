@@ -1,8 +1,6 @@
 ---
 - hosts: haproxy
-  become: yes
-  become_method: sudo
-  gather_facts: yes
+  gather_facts: true
 
   tasks:
     # - name: Update and upgrade apt packages

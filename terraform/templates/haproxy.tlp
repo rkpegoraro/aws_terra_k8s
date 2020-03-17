@@ -41,5 +41,5 @@ backend k8s-masters
         balance roundrobin
         option tcp-check
         %{ for host in masters ~}
-        server ${host} ${host}:6443 check fall 3 rise 2
+        server ${host.tags.Name} ${host.private_ip}:6443 check fall 3 rise 2
         %{ endfor ~}

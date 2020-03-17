@@ -90,6 +90,8 @@ data "aws_ami" "ubuntu18" {
   }
 }
 
+
+#TODO Create the IAM profile with terraform...
 # Proxy Instance
 resource "aws_instance" "k8s_proxies" {
   count                  = var.proxy_count
@@ -104,6 +106,7 @@ resource "aws_instance" "k8s_proxies" {
                   sudo hostname "${var.proxy_prefix}${count.index + 1}"
                   sudo echo "${var.proxy_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
+                  sudo apt-get install -y python
                   sudo apt-get install -y unzip
                   curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
                   unzip awscliv2.zip
@@ -118,6 +121,7 @@ resource "aws_instance" "k8s_proxies" {
 }
 
 # K8s Master Instances
+# Roles tags according to https://github.com/kubernetes-sigs/kubespray/blob/master/docs/aws.md
 resource "aws_instance" "k8s_masters" {
   count                  = var.master_count
   # ami                    = var.ami
@@ -130,12 +134,14 @@ resource "aws_instance" "k8s_masters" {
                   sudo hostname "${var.master_prefix}${count.index + 1}"
                   sudo echo "${var.master_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
+                  sudo apt-get install -y python
                   # docker install
-                  curl -fsSL https://get.docker.com | sh
+                  #curl -fsSL https://get.docker.com | sh
                   EOF
 
   tags = {
     Name = "${var.master_prefix}${count.index + 1}"
+    kubespray-role = "kube-master, etcd"
   }
 
 }
@@ -153,55 +159,53 @@ resource "aws_instance" "k8s_workers" {
                   sudo hostname "${var.worker_prefix}${count.index + 1}"
                   sudo echo "${var.worker_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
+                  sudo apt-get install -y python                  
                   # docker install
-                  curl -fsSL https://get.docker.com | sh
+                  #curl -fsSL https://get.docker.com | sh
                   EOF
 
   tags = {
     Name = "${var.worker_prefix}${count.index + 1}"
+    kubespray-role = "kube-node"
   }
 }
 
-# Consolidate all instances on a single list
-locals {
-  # A list of all instances created
-  instance_list = concat(aws_instance.k8s_proxies, aws_instance.k8s_masters, aws_instance.k8s_workers)
-}
+# # Consolidate all instances on a single list
+# locals {
+#   # A list of all instances created
+#   instance_list = concat(aws_instance.k8s_proxies, aws_instance.k8s_masters, aws_instance.k8s_workers)
+# }
 
-# Edit hosts file on all created instances
-# It is possible to do this with ansible, but I choose to left this as an example
-resource "null_resource" "edit_hosts" {
-  count = length(local.instance_list)
+# # Edit hosts file on all created instances
+# # It is possible to do this with ansible, but I choose to left this as an example
+# resource "null_resource" "edit_hosts" {
+#   count = length(local.instance_list)
 
-  depends_on = [
-    aws_instance.k8s_proxies,
-    aws_instance.k8s_masters,
-    aws_instance.k8s_workers,
-  ]
+#   depends_on = [
+#     aws_instance.k8s_proxies,
+#     aws_instance.k8s_masters,
+#     aws_instance.k8s_workers,
+#   ]
 
-  connection { //default ssh
-    #type        = "ssh"
-    user        = "ubuntu"
-    private_key = file(var.private_key)
-    host        = element(local.instance_list.*.public_ip, count.index)
-  }
+#   connection { //default ssh
+#     #type        = "ssh"
+#     user        = "ubuntu"
+#     private_key = file(var.private_key)
+#     host        = element(local.instance_list.*.public_ip, count.index)
+#   }
 
-  provisioner "remote-exec" {
-    # Change /etc/host file
-    inline = [
-      for host in local.instance_list :
-      "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
-    ]
-  }
-}
+#   provisioner "remote-exec" {
+#     # Change /etc/host file
+#     inline = [
+#       for host in local.instance_list :
+#       "echo ${host.private_ip} ${host.tags.Name} | sudo tee -a /etc/hosts"
+#     ]
+#   }
+# }
 
 resource "aws_eip" "proxy_eip" {
   instance = aws_instance.k8s_proxies.0.id
   vpc      = true
-
-  depends_on = [
-    null_resource.edit_hosts,
-  ]
 }
 
 ###############################################################################
@@ -247,41 +251,105 @@ resource "local_file" "keepalived_slave_script" {
 # Create HAProxy configuration file from Terraform templates #
 resource "local_file" "haproxy_config" {
   content  = templatefile("./templates/haproxy.tlp", {
-    masters = aws_instance.k8s_masters.*.tags.Name
+    masters = aws_instance.k8s_masters.*
   })
   filename = "config/haproxy.cfg"
 }
 
-# Create local inventory
-resource "null_resource" "ansible_inventory" {
+# The proxy instances are not in a loop because the elastic_ip overwrites the public ip of the first proxy instance, but 
+# seems that the terraform aws_instance is unable to recognized that new public ip
+resource "local_file" "create_inventory" {
+  content  = templatefile("./templates/inventory.tlp", {
+    elastic_ip  = aws_eip.proxy_eip.public_ip
+    proxy0  = aws_instance.k8s_proxies.0
+    proxy1  = aws_instance.k8s_proxies.1
+    masters = aws_instance.k8s_masters.*
+    workers = aws_instance.k8s_workers.*
+  })
+  filename = "../ansible/inventory.ini"
+}
+
+resource "null_resource" "download_kubespray" {
+  depends_on = [
+    local_file.create_inventory,
+  ]  
+
+  provisioner "local-exec" {
+    working_dir = "../ansible"
+    command     = "rm -rf kubespray && git clone --branch ${var.k8s_kubespray_version} ${var.k8s_kubespray_url}"
+  }
+}
+
+resource "null_resource" "prepare_kubespray_files" {
+  depends_on = [
+    null_resource.download_kubespray,
+  ]  
+
+  provisioner "local-exec" {
+    working_dir = "../ansible/kubespray"
+    command     = "cp -rfp inventory/sample inventory/mycluster"
+  }
+
+  provisioner "local-exec" {
+    working_dir = "../ansible"
+    command     = "cp inventory.ini ../ansible/kubespray/inventory/mycluster/inventory.ini"
+  }
+}
+
+resource "local_file" "create_kubespray_all_file" {
+  depends_on = [
+    null_resource.download_kubespray,
+  ]  
+
+  content  = templatefile("./templates/kubespray_all.tlp", {
+      lb_domain   = "k8s.stn.intra"
+      elastic_ip  = aws_eip.proxy_eip.public_ip
+  })
+  filename = "../ansible/kubespray/inventory/mycluster/group_vars/all/all.yml"
+}
+
+
+###############################################################################
+# Ansible playbooks
+###############################################################################
+
+# Configure HAProxy servers
+resource "null_resource" "ansible_haproxy_setup" {
   
   depends_on = [
-    aws_eip.proxy_eip,
-    aws_instance.k8s_masters,
-    aws_instance.k8s_workers,
+    local_file.create_inventory,
+    #TODO remove this dependency bellow later
+    null_resource.download_kubespray
+
   ]  
 
   # Note 1  The sleep command is to wait a bit so the instances are reachable
-  # Note 2: The proxy instances are not in a loop because the elastic_ip overwrites the public ip of the first proxy instance, but 
-  # seems that the terraform aws_instance is unable to recognized that new public ip
   provisioner "local-exec" {
     command = <<-EOT
-      sleep 20s
-      > ../ansible/inventory.ini
-      echo "[haproxy]" | tee -a ../ansible/inventory.ini
-      echo "${aws_instance.k8s_proxies.0.tags.Name} ansible_host=${aws_eip.proxy_eip.public_ip} private_ip=${aws_instance.k8s_proxies.0.private_ip}" | tee -a ../ansible/inventory.ini
-      echo "${aws_instance.k8s_proxies.1.tags.Name} ansible_host=${aws_instance.k8s_proxies.1.public_ip} private_ip=${aws_instance.k8s_proxies.1.private_ip}" | tee -a ../ansible/inventory.ini
-      echo "[k8s_masters]" | tee -a ../ansible/inventory.ini
-      %{ for node in aws_instance.k8s_masters }
-        echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini
-      %{ endfor ~}
-      echo "[k8s_workers]" | tee -a ../ansible/inventory.ini
-      %{ for node in aws_instance.k8s_workers }
-        echo "${node.tags.Name} ansible_host=${node.public_ip} private_ip=${node.private_ip}" | tee -a ../ansible/inventory.ini
-      %{ endfor ~}
+      sleep 15s
       export ANSIBLE_HOST_KEY_CHECKING=False;
-      ansible-playbook -i ../ansible/inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ../ansible/playbooks/install_haproxy.yml
+      export ANSIBLE_INTERPRETER_PYTHON=/usr/bin/python;
+      ansible-playbook -b -i ../ansible/inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ../ansible/playbooks/install_haproxy.yml
     EOT  
   }
 }
+
+
+# # Configure Kubernetes cluster using Kubespray
+# resource "null_resource" "ansible_kubespray_install" {
+  
+#   depends_on = [ # Wait for the HAProxy install just to keep the ansible logs somewhat organized
+#     null_resource.ansible_haproxy_setup,
+#     null_resource" "prepare_kubespray_files,
+#     local_file" "create_kubespray_all_file,
+#   ]  
+
+#   provisioner "local-exec" {
+#     working_dir = "../ansible/kubespray/"
+#     command = <<-EOT
+#       export ANSIBLE_HOST_KEY_CHECKING=False;
+#       ansible-playbook -b -i inventory/mycluster/inventory.ini -u ${var.remote_user} --private-key=${var.private_key} cluster.yml
+#     EOT  
+#   }
+# }
 

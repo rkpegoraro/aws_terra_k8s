@@ -7,17 +7,12 @@ variable "private_key" {
   default = "~/.ssh/k8s-test.pem"
 }
 
-variable "ami" {
-  description = "AMI to be used on the new virtual machines"
-  default = "ami-0b51ab7c28f4bf5a6"
-}
-
 variable "instance_type" {
   description = "AMI to be used on the new virtual machines"
   default = {
     proxy = "t2.micro"
-    master = "t2.micro" #"t3a.small"
-    worker = "t2.micro" #"t3a.small"
+    master = "t3a.small"
+    worker = "t3a.small"
   }
 }
 
@@ -27,12 +22,12 @@ variable "proxy_count" {
 }
 variable "master_count" {
   description = "Number of kubernetes master nodes"
-  default = 1
+  default = 3
 }
 
 variable "worker_count" {
   description = "Number of kubernetes worker nodes"
-  default = 1
+  default = 3
 }
 
 variable "remote_user" {
@@ -76,12 +71,12 @@ variable "vm_distro" {
 
 variable "k8s_kubespray_url" {
   description = "Kubespray git repository"
-  default     = "https://github.com/kubernetes-incubator/kubespray.git"
+  default     = "https://github.com/kubernetes-sigs/kubespray"
 }
 
 variable "k8s_kubespray_version" {
   description = "Kubespray version"
-  default     = "2.12.2"
+  default     = "v2.12.3"
 }
 
 variable "k8s_version" {

@@ -34,3 +34,6 @@ ansible/inventory.ini
 #Ignore config folder and its contents as they will be created on the fly
 config/
 ansible/kubespray/
+
+#Ignore ansible retry files
+*.retry
