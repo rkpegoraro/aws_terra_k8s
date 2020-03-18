@@ -134,7 +134,7 @@ resource "aws_instance" "k8s_masters" {
                   sudo hostname "${var.master_prefix}${count.index + 1}"
                   sudo echo "${var.master_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
-                  sudo apt-get install -y python
+                  #sudo apt-get install -y python
                   # docker install
                   #curl -fsSL https://get.docker.com | sh
                   EOF
@@ -159,7 +159,7 @@ resource "aws_instance" "k8s_workers" {
                   sudo hostname "${var.worker_prefix}${count.index + 1}"
                   sudo echo "${var.worker_prefix}${count.index + 1}" > /etc/hostname
                   sudo apt-get update
-                  sudo apt-get install -y python                  
+                  #sudo apt-get install -y python                  
                   # docker install
                   #curl -fsSL https://get.docker.com | sh
                   EOF
@@ -276,7 +276,11 @@ resource "null_resource" "download_kubespray" {
 
   provisioner "local-exec" {
     working_dir = "../ansible"
-    command     = "rm -rf kubespray && git clone --branch ${var.k8s_kubespray_version} ${var.k8s_kubespray_url}"
+    command     = <<-EOT
+      rm -rf kubespray
+      git clone --branch ${var.k8s_kubespray_version} ${var.k8s_kubespray_url}
+      sudo chmod 755 kubespray
+    EOT
   }
 }
 
@@ -292,7 +296,7 @@ resource "null_resource" "prepare_kubespray_files" {
 
   provisioner "local-exec" {
     working_dir = "../ansible"
-    command     = "cp inventory.ini ../ansible/kubespray/inventory/mycluster/inventory.ini"
+    command     = "cp -f inventory.ini ../ansible/kubespray/inventory/mycluster/inventory.ini"
   }
 }
 
@@ -325,11 +329,13 @@ resource "null_resource" "ansible_haproxy_setup" {
 
   # Note 1  The sleep command is to wait a bit so the instances are reachable
   provisioner "local-exec" {
+    working_dir = "../ansible"
     command = <<-EOT
       sleep 15s
-      export ANSIBLE_HOST_KEY_CHECKING=False;
-      export ANSIBLE_INTERPRETER_PYTHON=/usr/bin/python;
-      ansible-playbook -b -i ../ansible/inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ../ansible/playbooks/install_haproxy.yml
+      #export ANSIBLE_HOST_KEY_CHECKING=False;
+      #export ANSIBLE_INTERPRETER_PYTHON=/usr/bin/python3;
+      #export ANSIBLE_STDOUT_CALLBACK=json;
+      ansible-playbook -b -i ./inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ./playbooks/install_haproxy.yml
     EOT  
   }
 }
