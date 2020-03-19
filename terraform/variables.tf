@@ -4,7 +4,7 @@
 
 variable "private_key" {
   description = "Path and file name of the private key to be used to connect to the AWS account"
-  default = "~/.ssh/k8s-test.pem"
+  default = ".ssh/k8s-test.pem"
 }
 
 variable "instance_type" {
@@ -22,12 +22,12 @@ variable "proxy_count" {
 }
 variable "master_count" {
   description = "Number of kubernetes master nodes"
-  default = 3
+  default = 1
 }
 
 variable "worker_count" {
   description = "Number of kubernetes worker nodes"
-  default = 3
+  default = 1
 }
 
 variable "remote_user" {

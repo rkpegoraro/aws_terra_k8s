@@ -284,19 +284,24 @@ resource "null_resource" "download_kubespray" {
   }
 }
 
-resource "null_resource" "prepare_kubespray_files" {
+resource "null_resource" "prepare_kubespray_cluster_folder" {
   depends_on = [
     null_resource.download_kubespray,
   ]  
 
   provisioner "local-exec" {
     working_dir = "../ansible/kubespray"
-    command     = "cp -rfp inventory/sample inventory/mycluster"
+    command     = "pwd | tee -a /mnt/c/code/aws_terra_k8s/terraform/pwd_folder.txt && cp -rfp inventory/sample inventory/mycluster"
   }
+}
 
+resource "null_resource" "prepare_kubespray__inventory_file" {
+  depends_on = [
+    null_resource.prepare_kubespray_cluster_folder,
+  ]  
   provisioner "local-exec" {
     working_dir = "../ansible"
-    command     = "cp -f inventory.ini ../ansible/kubespray/inventory/mycluster/inventory.ini"
+    command     = "pwd | tee -a /mnt/c/code/aws_terra_k8s/terraform/pwd_file.txt && cp -f inventory.ini ../ansible/kubespray/inventory/mycluster/inventory.ini"
   }
 }
 
@@ -335,7 +340,8 @@ resource "null_resource" "ansible_haproxy_setup" {
       #export ANSIBLE_HOST_KEY_CHECKING=False;
       #export ANSIBLE_INTERPRETER_PYTHON=/usr/bin/python3;
       #export ANSIBLE_STDOUT_CALLBACK=json;
-      ansible-playbook -b -i ./inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ./playbooks/install_haproxy.yml
+      export ANSIBLE_CONFIG=/mnt/c/code/aws_terra_k8s/ansible/playbooks/ansible.cfg
+      #ansible-playbook -b -i ./inventory.ini -u ${var.remote_user} --private-key=${var.private_key} ./playbooks/install_haproxy.yml
     EOT  
   }
 }

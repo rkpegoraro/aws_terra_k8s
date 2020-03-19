@@ -1,0 +1,15 @@
+127.0.0.1 localhost
+
+# HAPROXY servers
+${proxy0.private_ip} ${proxy0.tags.Name}
+${proxy0.private_ip} ${proxy1.tags.Name}
+
+# Kubermetes Masters Nodes
+%{ for host in masters ~}
+${host.private_ip} ${host.tags.Name}
+%{ endfor ~}
+
+# Kubermetes Worker Nodes
+%{ for host in workers ~}
+${host.private_ip} ${host.tags.Name}
+%{ endfor ~}
